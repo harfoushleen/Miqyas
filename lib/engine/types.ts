@@ -33,6 +33,8 @@ export interface TestConfig {
     readonly consecutiveIncorrect: number;
     readonly countBy: "item" | "block";
     readonly blockSize: number;
+    /** 1 = any wrong answer fails a block; blockSize = all wrong. */
+    readonly blockFailWhenIncorrectAtLeast: number;
     readonly resetOnSectionChange: boolean;
   };
   readonly scoring: {
@@ -41,12 +43,25 @@ export interface TestConfig {
   };
 }
 
-/** One recorded answer. `choiceIndex: null` = no answer (counts as incorrect). */
+export const RESPONSE_TYPES = [
+  "answered",
+  "no_response",
+  "skipped_by_examiner",
+] as const;
+export type ResponseType = (typeof RESPONSE_TYPES)[number];
+
+/**
+ * One recorded answer. Both non-answer types are scored incorrect for now but
+ * kept distinct in the data. `choiceIndex` must be null unless "answered".
+ */
 export interface ResponseEvent {
   readonly itemId: string;
+  readonly responseType: ResponseType;
   readonly choiceIndex: number | null;
-  /** Epoch ms, supplied by the caller. */
-  readonly timestamp: number;
+  /** Milliseconds from item shown to answer, measured by the caller. */
+  readonly timeMs: number;
+  /** Epoch ms when the answer was given, supplied by the caller. */
+  readonly answeredAt: number;
 }
 
 export type StopReason = "ceiling" | "end-of-items";
@@ -68,7 +83,8 @@ export interface SessionState {
   readonly highestIndex: number;
   readonly nextIndex: number;
   readonly ceilingRun: number;
-  readonly blockAllWrong: boolean;
+  /** Incorrect answers so far in the current block. */
+  readonly blockIncorrect: number;
   readonly lastSection: string | null;
   readonly stopReason: StopReason | null;
 }
@@ -81,6 +97,18 @@ export interface ScoreResult {
   readonly credited: number;
   readonly administered: number;
   readonly bySection: Readonly<Record<string, number>>;
+  /** Number of events of each response type (non-answers are scored incorrect). */
+  readonly byResponseType: Readonly<Record<ResponseType, number>>;
+  readonly timing: {
+    readonly totalTimeMs: number;
+    readonly perItem: readonly {
+      readonly itemId: string;
+      readonly responseType: ResponseType;
+      readonly correct: boolean;
+      readonly timeMs: number;
+      readonly answeredAt: number;
+    }[];
+  };
   readonly basalMet: boolean | null;
   readonly stopReason: StopReason | null;
 }

@@ -9,7 +9,8 @@ import {
   stopReason,
 } from "../engine";
 import { placeholderItems } from "../placeholder-items";
-import { answer, begin, cfg, currentId, makeItems, run } from "./helpers";
+import type { ResponseEvent } from "../types";
+import { answer, begin, cfg, currentId, ev, makeItems, run } from "./helpers";
 
 const T = true;
 const F = false;
@@ -60,9 +61,7 @@ describe("ceiling: consecutive incorrect", () => {
 
   it("rejects answers after the session has stopped", () => {
     const s = run(begin(makeItems(20), defaultConfig), [F, F, F, F]);
-    expect(() =>
-      recordResponse(s, { itemId: "t4", choiceIndex: 0, timestamp: 9 }),
-    ).toThrow(/stopped/);
+    expect(() => recordResponse(s, ev("t4", 0))).toThrow(/stopped/);
   });
 
   it("honours a custom threshold", () => {
@@ -98,21 +97,50 @@ describe("ceiling: section boundary", () => {
 });
 
 describe("ceiling: counted per block", () => {
-  const blockCfg = cfg({
-    ceiling: { countBy: "block", blockSize: 3, consecutiveIncorrect: 2 },
+  const blockCfg = (blockFailWhenIncorrectAtLeast?: number) =>
+    cfg({
+      ceiling: {
+        countBy: "block",
+        blockSize: 3,
+        consecutiveIncorrect: 2,
+        ...(blockFailWhenIncorrectAtLeast === undefined
+          ? {}
+          : { blockFailWhenIncorrectAtLeast }),
+      },
+    });
+  const items = makeItems(20);
+
+  it("defaults to a block failing on any single wrong answer", () => {
+    expect(defaultConfig.ceiling.blockFailWhenIncorrectAtLeast).toBe(1);
+    // Block 0 = one wrong, block 1 = one wrong => two failed blocks.
+    let s = run(begin(items, blockCfg()), [F, T, T, T, F]);
+    expect(stopReason(s)).toBeNull(); // block 1 not finished
+    s = answer(s, T);
+    expect(stopReason(s)).toBe("ceiling");
+    expect(s.events).toHaveLength(6);
   });
 
-  it("stops after N consecutive fully-incorrect blocks", () => {
-    let s = run(begin(makeItems(20), blockCfg), [F, F, F, F, F]);
+  it("with the default, a fully-correct block resets the run", () => {
+    let s = run(begin(items, blockCfg()), [F, T, T, T, T, T, F, T, T]);
     expect(stopReason(s)).toBeNull();
-    s = answer(s, F);
+    s = run(s, [F, T, T]);
     expect(stopReason(s)).toBe("ceiling");
   });
 
-  it("a block with any correct answer resets the block run", () => {
-    let s = run(begin(makeItems(20), blockCfg), [F, F, F, F, T, F, F, F, F]);
-    expect(stopReason(s)).toBeNull();
-    s = run(s, [F, F, F]);
+  it("blockFailWhenIncorrectAtLeast = blockSize needs every item wrong", () => {
+    let s = run(begin(items, blockCfg(3)), [F, F, T, F, F, T]);
+    expect(stopReason(s)).toBeNull(); // two wrong in each block is not enough
+    s = run(s, [F, F, F, F, F]);
+    expect(stopReason(s)).toBeNull(); // only one failed block so far
+    s = answer(s, F);
+    expect(stopReason(s)).toBe("ceiling");
+    expect(s.events).toHaveLength(12);
+  });
+
+  it("an intermediate threshold of 2 fails a block with two wrong answers", () => {
+    let s = run(begin(items, blockCfg(2)), [F, T, T, F, T, T]);
+    expect(stopReason(s)).toBeNull(); // one wrong per block passes
+    s = run(s, [F, F, T, F, T, F]);
     expect(stopReason(s)).toBe("ceiling");
   });
 
@@ -226,25 +254,41 @@ describe("recordResponse validation", () => {
   const s = begin(makeItems(5), defaultConfig);
 
   it("rejects a response for an item that is not current", () => {
-    expect(() =>
-      recordResponse(s, { itemId: "t3", choiceIndex: 0, timestamp: 1 }),
-    ).toThrow(/expected t0/);
+    expect(() => recordResponse(s, ev("t3", 0))).toThrow(/expected t0/);
   });
 
   it.each([-1, 2, 0.5])("rejects invalid choice index %s", (choiceIndex) => {
-    expect(() =>
-      recordResponse(s, { itemId: "t0", choiceIndex, timestamp: 1 }),
-    ).toThrow(/choice/);
+    expect(() => recordResponse(s, ev("t0", choiceIndex))).toThrow(/choice/);
   });
 
-  it("treats a null choice (no answer) as incorrect", () => {
-    const next = recordResponse(s, {
-      itemId: "t0",
-      choiceIndex: null,
-      timestamp: 1,
-    });
-    expect(score(next).total).toBe(0);
-    expect(next.events).toHaveLength(1);
+  it("rejects an answered event without a choice", () => {
+    expect(() => recordResponse(s, ev("t0", null))).toThrow(/choice/);
+  });
+
+  it("rejects a non-answer that carries a choice", () => {
+    expect(() => recordResponse(s, ev("t0", 0, "no_response"))).toThrow(
+      /must be null/,
+    );
+  });
+
+  it("rejects an unknown response type", () => {
+    const bad = {
+      ...ev("t0", 0),
+      responseType: "later",
+    } as unknown as ResponseEvent;
+    expect(() => recordResponse(s, bad)).toThrow(/responseType/);
+  });
+
+  it.each([-1, Number.NaN, Infinity])("rejects invalid timeMs %s", (timeMs) => {
+    expect(() => recordResponse(s, { ...ev("t0", 0), timeMs })).toThrow(
+      /timeMs/,
+    );
+  });
+
+  it("rejects a non-finite answeredAt", () => {
+    expect(() =>
+      recordResponse(s, { ...ev("t0", 0), answeredAt: Number.NaN }),
+    ).toThrow(/answeredAt/);
   });
 
   it("does not mutate the previous state", () => {
@@ -316,6 +360,93 @@ describe("scoring", () => {
   it("proportion of an empty session is 0", () => {
     const r = score(begin(items, cfg({ scoring: { method: "proportion" } })));
     expect(r.total).toBe(0);
+  });
+});
+
+describe("non-responses", () => {
+  const base = () => begin(makeItems(10), defaultConfig);
+
+  it.each(["no_response", "skipped_by_examiner"] as const)(
+    "%s is scored incorrect and counts toward the ceiling",
+    (type) => {
+      let s = recordResponse(base(), ev("t0", null, type));
+      expect(score(s).total).toBe(0);
+      s = recordResponse(s, ev("t1", null, type));
+      s = recordResponse(s, ev("t2", null, type));
+      s = recordResponse(s, ev("t3", null, type));
+      expect(stopReason(s)).toBe("ceiling");
+    },
+  );
+
+  it("keeps the response types distinct in the score breakdown", () => {
+    let s = recordResponse(base(), ev("t0", 0)); // correct
+    s = recordResponse(s, ev("t1", 1)); // wrong answer
+    s = recordResponse(s, ev("t2", null, "no_response"));
+    s = recordResponse(s, ev("t3", null, "skipped_by_examiner"));
+    const r = score(s);
+    expect(r.byResponseType).toEqual({
+      answered: 2,
+      no_response: 1,
+      skipped_by_examiner: 1,
+    });
+    expect(r.total).toBe(1);
+    expect(r.timing.perItem.map((p) => p.responseType)).toEqual([
+      "answered",
+      "answered",
+      "no_response",
+      "skipped_by_examiner",
+    ]);
+    expect(s.events.map((e) => e.responseType)).toEqual(
+      r.timing.perItem.map((p) => p.responseType),
+    );
+  });
+});
+
+describe("response timing", () => {
+  it("stores timeMs and answeredAt on every event and exposes them in score()", () => {
+    let s = begin(makeItems(10), defaultConfig);
+    s = recordResponse(s, { ...ev("t0", 0), timeMs: 1200, answeredAt: 5_000 });
+    s = recordResponse(s, { ...ev("t1", 1), timeMs: 800, answeredAt: 6_000 });
+    s = recordResponse(s, {
+      ...ev("t2", null, "no_response"),
+      timeMs: 30_000,
+      answeredAt: 36_000,
+    });
+    expect(s.events.map((e) => [e.timeMs, e.answeredAt])).toEqual([
+      [1200, 5_000],
+      [800, 6_000],
+      [30_000, 36_000],
+    ]);
+    const { timing } = score(s);
+    expect(timing.totalTimeMs).toBe(32_000);
+    expect(timing.perItem).toEqual([
+      {
+        itemId: "t0",
+        responseType: "answered",
+        correct: true,
+        timeMs: 1200,
+        answeredAt: 5_000,
+      },
+      {
+        itemId: "t1",
+        responseType: "answered",
+        correct: false,
+        timeMs: 800,
+        answeredAt: 6_000,
+      },
+      {
+        itemId: "t2",
+        responseType: "no_response",
+        correct: false,
+        timeMs: 30_000,
+        answeredAt: 36_000,
+      },
+    ]);
+  });
+
+  it("an empty session has zero total time", () => {
+    const { timing } = score(begin(makeItems(3), defaultConfig));
+    expect(timing).toEqual({ totalTimeMs: 0, perItem: [] });
   });
 });
 
@@ -403,6 +534,17 @@ describe("config validation", () => {
         start: { byAge: [{ minAge: 9, maxAge: 5, itemIndex: 0 }] },
       }),
     ).toThrow(/minAge/);
+  });
+
+  it("rejects blockFailWhenIncorrectAtLeast above blockSize or below 1", () => {
+    expect(() =>
+      parseConfig({
+        ceiling: { blockSize: 3, blockFailWhenIncorrectAtLeast: 4 },
+      }),
+    ).toThrow(/blockFailWhenIncorrectAtLeast/);
+    expect(() =>
+      parseConfig({ ceiling: { blockFailWhenIncorrectAtLeast: 0 } }),
+    ).toThrow(/blockFailWhenIncorrectAtLeast/);
   });
 
   it("reports a root-level problem without a path", () => {

@@ -12,6 +12,7 @@ import {
 import { placeholderItems } from "@/lib/engine/placeholder-items";
 import type {
   Participant,
+  ResponseType,
   SessionContext,
   SessionState,
 } from "@/lib/engine/types";
@@ -27,6 +28,7 @@ export function EnginePlayground() {
   const [error, setError] = useState<string | null>(null);
   const [ctx, setCtx] = useState<SessionContext | null>(null);
   const [state, setState] = useState<SessionState | null>(null);
+  const [shownAt, setShownAt] = useState(0);
 
   function start() {
     try {
@@ -42,24 +44,32 @@ export function EnginePlayground() {
       };
       setCtx(next);
       setState(startSession(next));
+      setShownAt(next.startedAt);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
 
-  function choose(choiceIndex: number | null) {
+  function choose(
+    responseType: ResponseType,
+    choiceIndex: number | null = null,
+  ) {
     if (!state) return;
     const item = nextItem(state);
     if (!item) return;
     try {
+      const answeredAt = now();
       setState(
         recordResponse(state, {
           itemId: item.id,
+          responseType,
           choiceIndex,
-          timestamp: now(),
+          timeMs: answeredAt - shownAt,
+          answeredAt,
         }),
       );
+      setShownAt(answeredAt);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -118,11 +128,14 @@ export function EnginePlayground() {
                 {state.phase})
               </p>
               {item.choices.map((c, i) => (
-                <button key={i} onClick={() => choose(i)}>
+                <button key={i} onClick={() => choose("answered", i)}>
                   {c} ({String.fromCharCode(65 + i)})
                 </button>
               ))}{" "}
-              <button onClick={() => choose(null)}>No answer</button>
+              <button onClick={() => choose("no_response")}>No response</button>{" "}
+              <button onClick={() => choose("skipped_by_examiner")}>
+                Skipped by examiner
+              </button>
               <p>
                 (Correct answer: {String.fromCharCode(65 + item.correctIndex)})
               </p>

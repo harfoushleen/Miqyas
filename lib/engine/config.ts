@@ -36,12 +36,22 @@ const basalSchema = z.strictObject({
   onFail: z.enum(["go-back", "continue"]).default("go-back"),
 });
 
-const ceilingSchema = z.strictObject({
-  consecutiveIncorrect: positive.default(4),
-  countBy: z.enum(["item", "block"]).default("item"),
-  blockSize: positive.default(5),
-  resetOnSectionChange: z.boolean().default(false),
-});
+const ceilingSchema = z
+  .strictObject({
+    consecutiveIncorrect: positive.default(4),
+    countBy: z.enum(["item", "block"]).default("item"),
+    blockSize: positive.default(5),
+    /**
+     * A block fails when it has at least this many incorrect answers:
+     * 1 = any wrong answer fails the block, blockSize = all wrong.
+     */
+    blockFailWhenIncorrectAtLeast: positive.default(1),
+    resetOnSectionChange: z.boolean().default(false),
+  })
+  .refine((c) => c.blockFailWhenIncorrectAtLeast <= c.blockSize, {
+    message: "blockFailWhenIncorrectAtLeast must not be greater than blockSize",
+    path: ["blockFailWhenIncorrectAtLeast"],
+  });
 
 const scoringSchema = z.strictObject({
   method: z.enum(["raw", "proportion"]).default("raw"),

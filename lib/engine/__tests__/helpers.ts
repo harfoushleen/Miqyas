@@ -1,6 +1,13 @@
 import { nextItem, recordResponse, startSession } from "../engine";
 import { parseConfig } from "../config";
-import type { Item, Participant, SessionState, TestConfig } from "../types";
+import type {
+  Item,
+  Participant,
+  ResponseEvent,
+  ResponseType,
+  SessionState,
+  TestConfig,
+} from "../types";
 
 /** Fake items; the first `sectionSize` are section "A", the rest "B". */
 export function makeItems(count: number, sectionSize = count): Item[] {
@@ -26,16 +33,31 @@ export function begin(
   return startSession({ items, config, participant, startedAt: 1_000 });
 }
 
+/** Build a ResponseEvent with fixed, fake timing. */
+export function ev(
+  itemId: string,
+  choiceIndex: number | null,
+  responseType: ResponseType = "answered",
+): ResponseEvent {
+  return {
+    itemId,
+    responseType,
+    choiceIndex,
+    timeMs: 1_000,
+    answeredAt: 2_000,
+  };
+}
+
 /** Answer the current item correctly (true) or incorrectly (false). */
 export function answer(state: SessionState, correct: boolean): SessionState {
   const item = nextItem(state);
   if (!item) throw new Error("no current item");
+  const choice = correct
+    ? item.correctIndex
+    : (item.correctIndex + 1) % item.choices.length;
   return recordResponse(state, {
-    itemId: item.id,
-    choiceIndex: correct
-      ? item.correctIndex
-      : (item.correctIndex + 1) % item.choices.length,
-    timestamp: 2_000 + state.events.length,
+    ...ev(item.id, choice),
+    answeredAt: 2_000 + state.events.length,
   });
 }
 

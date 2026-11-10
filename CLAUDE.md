@@ -11,6 +11,9 @@ Stack: Next.js (App Router) + TypeScript strict + Tailwind + shadcn/ui, pnpm, Vi
 3. **Every rule is configurable, nothing hard-coded**: starting item by age/grade, basal rule, ceiling/stop rule, scoring. The rules are pending confirmation with the professor. Defaults live in `lib/engine/config.ts`; add new rules as config fields validated by zod.
 4. **The engine is pure TypeScript** in `lib/engine/`: no React, no database, no `Date.now()`/`Math.random()` in logic (pass timestamps in). Same inputs give same outputs.
 5. **Event-sourced**: every answer is stored as a `ResponseEvent`; session state and score are derived from events, so any session can be replayed and rescored (`replay`).
+   - Every `ResponseEvent` carries `responseType` (`answered` | `no_response` | `skipped_by_examiner`), `choiceIndex` (non-null only when answered), `timeMs` (item shown to answer) and `answeredAt`. The caller measures and passes both times; the engine never reads a clock.
+   - Both non-answer types are scored incorrect for now, but must stay distinct in stored data and in `score()` (`byResponseType`, `timing.perItem`). Never collapse them.
+   - Block-based ceiling: a block fails when it has at least `ceiling.blockFailWhenIncorrectAtLeast` incorrect answers (default 1 = any wrong answer fails the block).
 
 ## Structure
 

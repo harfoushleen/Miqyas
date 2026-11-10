@@ -3,8 +3,10 @@
  * Session state is a deterministic reduction of the ResponseEvent log, so any
  * session can be replayed and rescored (also under a different config).
  */
+import { RESPONSE_TYPES } from "./types";
 import type {
   Item,
+  ResponseType,
   Participant,
   ResponseEvent,
   ScoreResult,
@@ -59,7 +61,7 @@ export function startSession(ctx: SessionContext): SessionState {
     highestIndex: startIndex - 1,
     nextIndex: startIndex,
     ceilingRun: 0,
-    blockAllWrong: true,
+    blockIncorrect: 0,
     lastSection: null,
     stopReason: null,
   };
@@ -74,8 +76,38 @@ export function stopReason(state: SessionState): StopReason | null {
   return state.stopReason;
 }
 
-function isCorrect(item: Item, choiceIndex: number | null): boolean {
-  return choiceIndex === item.correctIndex;
+/** Only an "answered" event with the right choice is correct; non-answers never are. */
+function isCorrect(item: Item, event: ResponseEvent): boolean {
+  return (
+    event.responseType === "answered" && event.choiceIndex === item.correctIndex
+  );
+}
+
+function validateEvent(event: ResponseEvent, item: Item): void {
+  if (!RESPONSE_TYPES.includes(event.responseType)) {
+    throw new EngineError(`Unknown responseType ${String(event.responseType)}`);
+  }
+  const choice = event.choiceIndex;
+  if (event.responseType === "answered") {
+    if (
+      choice === null ||
+      !Number.isInteger(choice) ||
+      choice < 0 ||
+      choice >= item.choices.length
+    ) {
+      throw new EngineError(`Invalid choice index ${choice} for ${item.id}`);
+    }
+  } else if (choice !== null) {
+    throw new EngineError(
+      `choiceIndex must be null for responseType ${event.responseType}`,
+    );
+  }
+  if (!Number.isFinite(event.timeMs) || event.timeMs < 0) {
+    throw new EngineError(`Invalid timeMs ${event.timeMs} for ${item.id}`);
+  }
+  if (!Number.isFinite(event.answeredAt)) {
+    throw new EngineError(`Invalid answeredAt ${event.answeredAt}`);
+  }
 }
 
 export function recordResponse(
@@ -93,18 +125,12 @@ export function recordResponse(
       `Response for ${event.itemId} but expected ${item.id}`,
     );
   }
-  const choice = event.choiceIndex;
-  if (
-    choice !== null &&
-    (!Number.isInteger(choice) || choice < 0 || choice >= item.choices.length)
-  ) {
-    throw new EngineError(`Invalid choice index ${choice} for ${item.id}`);
-  }
-  const correct = isCorrect(item, choice);
+  validateEvent(event, item);
+  const correct = isCorrect(item, event);
   const { basal, ceiling } = config;
 
   let { phase, basalMet, basalRun, lowestIndex, highestIndex } = state;
-  let { ceilingRun, blockAllWrong, lastSection } = state;
+  let { ceilingRun, blockIncorrect, lastSection } = state;
   let nextIndex: number;
 
   if (phase === "forward") {
@@ -117,16 +143,19 @@ export function recordResponse(
       lastSection !== item.section
     ) {
       ceilingRun = 0;
-      blockAllWrong = true;
+      blockIncorrect = 0;
     }
     lastSection = item.section;
     if (ceiling.countBy === "item") {
       ceilingRun = correct ? 0 : ceilingRun + 1;
     } else {
-      blockAllWrong = blockAllWrong && !correct;
+      if (!correct) blockIncorrect += 1;
       if ((index + 1) % ceiling.blockSize === 0 || index === items.length - 1) {
-        ceilingRun = blockAllWrong ? ceilingRun + 1 : 0;
-        blockAllWrong = true;
+        ceilingRun =
+          blockIncorrect >= ceiling.blockFailWhenIncorrectAtLeast
+            ? ceilingRun + 1
+            : 0;
+        blockIncorrect = 0;
       }
     }
 
@@ -150,7 +179,7 @@ export function recordResponse(
       basalMet = basalRun >= basal.consecutiveCorrect;
       phase = "forward";
       ceilingRun = 0;
-      blockAllWrong = true;
+      blockIncorrect = 0;
       nextIndex = highestIndex + 1;
     } else {
       nextIndex = index - 1;
@@ -175,7 +204,7 @@ export function recordResponse(
     highestIndex,
     nextIndex,
     ceilingRun,
-    blockAllWrong,
+    blockIncorrect,
     lastSection,
     stopReason: reason,
   };
@@ -187,12 +216,28 @@ export function score(state: SessionState): ScoreResult {
   for (const item of items) bySection[item.section] = 0;
 
   let correctAdministered = 0;
-  state.events.forEach((event, i) => {
+  let totalTimeMs = 0;
+  const byResponseType: Record<ResponseType, number> = {
+    answered: 0,
+    no_response: 0,
+    skipped_by_examiner: 0,
+  };
+  const perItem = state.events.map((event, i) => {
     const item = items[state.administered[i]];
-    if (isCorrect(item, event.choiceIndex)) {
+    const correct = isCorrect(item, event);
+    if (correct) {
       correctAdministered += 1;
       bySection[item.section] += 1;
     }
+    byResponseType[event.responseType] += 1;
+    totalTimeMs += event.timeMs;
+    return {
+      itemId: item.id,
+      responseType: event.responseType,
+      correct,
+      timeMs: event.timeMs,
+      answeredAt: event.answeredAt,
+    };
   });
 
   let credited = 0;
@@ -219,6 +264,8 @@ export function score(state: SessionState): ScoreResult {
     credited,
     administered,
     bySection,
+    byResponseType,
+    timing: { totalTimeMs, perItem },
     basalMet: state.basalMet,
     stopReason: state.stopReason,
   };

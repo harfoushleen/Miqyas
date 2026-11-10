@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError, defaultConfig, parseConfig } from "../config";
-import { nextItem, recordResponse, replay, score, startSession, stopReason } from "../engine";
+import {
+  nextItem,
+  recordResponse,
+  replay,
+  score,
+  startSession,
+  stopReason,
+} from "../engine";
 import { placeholderItems } from "../placeholder-items";
 import { answer, begin, cfg, currentId, makeItems, run } from "./helpers";
 
@@ -10,8 +17,12 @@ const F = false;
 describe("placeholder items", () => {
   it("has 50 fake items, 25 per section, with valid answer keys", () => {
     expect(placeholderItems).toHaveLength(50);
-    expect(placeholderItems.filter((i) => i.section === "grammar")).toHaveLength(25);
-    expect(placeholderItems.filter((i) => i.section === "comprehension")).toHaveLength(25);
+    expect(
+      placeholderItems.filter((i) => i.section === "grammar"),
+    ).toHaveLength(25);
+    expect(
+      placeholderItems.filter((i) => i.section === "comprehension"),
+    ).toHaveLength(25);
     for (const item of placeholderItems) {
       expect(item.prompt).toMatch(/PLACEHOLDER/);
       expect(item.correctIndex).toBeLessThan(item.choices.length);
@@ -49,13 +60,16 @@ describe("ceiling: consecutive incorrect", () => {
 
   it("rejects answers after the session has stopped", () => {
     const s = run(begin(makeItems(20), defaultConfig), [F, F, F, F]);
-    expect(() => recordResponse(s, { itemId: "t4", choiceIndex: 0, timestamp: 9 })).toThrow(
-      /stopped/,
-    );
+    expect(() =>
+      recordResponse(s, { itemId: "t4", choiceIndex: 0, timestamp: 9 }),
+    ).toThrow(/stopped/);
   });
 
   it("honours a custom threshold", () => {
-    const s = run(begin(makeItems(20), cfg({ ceiling: { consecutiveIncorrect: 2 } })), [F, F]);
+    const s = run(
+      begin(makeItems(20), cfg({ ceiling: { consecutiveIncorrect: 2 } })),
+      [F, F],
+    );
     expect(stopReason(s)).toBe("ceiling");
   });
 });
@@ -71,7 +85,10 @@ describe("ceiling: section boundary", () => {
   });
 
   it("resets the run on entering a new section when resetOnSectionChange is true", () => {
-    const config = cfg({ ...startAt3, ceiling: { resetOnSectionChange: true } });
+    const config = cfg({
+      ...startAt3,
+      ceiling: { resetOnSectionChange: true },
+    });
     let s = run(begin(items, config), [F, F, F, F, F]);
     expect(stopReason(s)).toBeNull();
     s = answer(s, F); // items 5..8 are four wrong in section B
@@ -81,7 +98,9 @@ describe("ceiling: section boundary", () => {
 });
 
 describe("ceiling: counted per block", () => {
-  const blockCfg = cfg({ ceiling: { countBy: "block", blockSize: 3, consecutiveIncorrect: 2 } });
+  const blockCfg = cfg({
+    ceiling: { countBy: "block", blockSize: 3, consecutiveIncorrect: 2 },
+  });
 
   it("stops after N consecutive fully-incorrect blocks", () => {
     let s = run(begin(makeItems(20), blockCfg), [F, F, F, F, F]);
@@ -93,7 +112,7 @@ describe("ceiling: counted per block", () => {
   it("a block with any correct answer resets the block run", () => {
     let s = run(begin(makeItems(20), blockCfg), [F, F, F, F, T, F, F, F, F]);
     expect(stopReason(s)).toBeNull();
-    s = run(s, [F, F]);
+    s = run(s, [F, F, F]);
     expect(stopReason(s)).toBe("ceiling");
   });
 
@@ -193,9 +212,9 @@ describe("start item", () => {
   });
 
   it("rejects a start index beyond the item list", () => {
-    expect(() => begin(makeItems(3), cfg({ start: { defaultItemIndex: 3 } }))).toThrow(
-      /start item index 3/,
-    );
+    expect(() =>
+      begin(makeItems(3), cfg({ start: { defaultItemIndex: 3 } })),
+    ).toThrow(/start item index 3/);
   });
 
   it("rejects an empty item list", () => {
@@ -207,17 +226,23 @@ describe("recordResponse validation", () => {
   const s = begin(makeItems(5), defaultConfig);
 
   it("rejects a response for an item that is not current", () => {
-    expect(() => recordResponse(s, { itemId: "t3", choiceIndex: 0, timestamp: 1 })).toThrow(
-      /expected t0/,
-    );
+    expect(() =>
+      recordResponse(s, { itemId: "t3", choiceIndex: 0, timestamp: 1 }),
+    ).toThrow(/expected t0/);
   });
 
   it.each([-1, 2, 0.5])("rejects invalid choice index %s", (choiceIndex) => {
-    expect(() => recordResponse(s, { itemId: "t0", choiceIndex, timestamp: 1 })).toThrow(/choice/);
+    expect(() =>
+      recordResponse(s, { itemId: "t0", choiceIndex, timestamp: 1 }),
+    ).toThrow(/choice/);
   });
 
   it("treats a null choice (no answer) as incorrect", () => {
-    const next = recordResponse(s, { itemId: "t0", choiceIndex: null, timestamp: 1 });
+    const next = recordResponse(s, {
+      itemId: "t0",
+      choiceIndex: null,
+      timestamp: 1,
+    });
     expect(score(next).total).toBe(0);
     expect(next.events).toHaveLength(1);
   });
@@ -233,7 +258,13 @@ describe("scoring", () => {
   const items = makeItems(10, 5);
 
   it("raw score counts only administered correct answers by default", () => {
-    const s = run(begin(items, cfg({ start: { defaultItemIndex: 5 } })), [T, T, F, T, T]);
+    const s = run(begin(items, cfg({ start: { defaultItemIndex: 5 } })), [
+      T,
+      T,
+      F,
+      T,
+      T,
+    ]);
     const r = score(s);
     expect(r.total).toBe(4);
     expect(r.administered).toBe(5);
@@ -295,7 +326,12 @@ describe("replay", () => {
       basal: { enabled: true, consecutiveCorrect: 2 },
       scoring: { creditBelowStart: true },
     });
-    const ctx = { items: placeholderItems, config, participant: {}, startedAt: 1_000 };
+    const ctx = {
+      items: placeholderItems,
+      config,
+      participant: {},
+      startedAt: 1_000,
+    };
     const live = run(startSession(ctx), [F, T, T, T, F, T, F, F, F, F]);
     const replayed = replay(ctx, live.events);
     expect(replayed).toEqual(live);
@@ -304,7 +340,12 @@ describe("replay", () => {
   });
 
   it("rescores the same events under a different config", () => {
-    const ctx = { items: makeItems(10), config: defaultConfig, participant: {}, startedAt: 0 };
+    const ctx = {
+      items: makeItems(10),
+      config: defaultConfig,
+      participant: {},
+      startedAt: 0,
+    };
     const live = run(startSession(ctx), [T, T, F, T]);
     const other = replay(
       { ...ctx, config: cfg({ scoring: { method: "proportion" } }) },
@@ -315,7 +356,12 @@ describe("replay", () => {
   });
 
   it("an empty event log yields a fresh session", () => {
-    const ctx = { items: makeItems(3), config: defaultConfig, participant: {}, startedAt: 0 };
+    const ctx = {
+      items: makeItems(3),
+      config: defaultConfig,
+      participant: {},
+      startedAt: 0,
+    };
     expect(replay(ctx, [])).toEqual(startSession(ctx));
   });
 });
@@ -332,22 +378,30 @@ describe("config validation", () => {
   });
 
   it("names the offending field when a value is out of range", () => {
-    expect(() => parseConfig({ ceiling: { consecutiveIncorrect: 0 } })).toThrow(ConfigError);
+    expect(() => parseConfig({ ceiling: { consecutiveIncorrect: 0 } })).toThrow(
+      ConfigError,
+    );
     expect(() => parseConfig({ ceiling: { consecutiveIncorrect: 0 } })).toThrow(
       /ceiling\.consecutiveIncorrect/,
     );
   });
 
   it("rejects wrong types, unknown keys and bad enums", () => {
-    expect(() => parseConfig({ basal: { enabled: "yes" } })).toThrow(/basal\.enabled/);
+    expect(() => parseConfig({ basal: { enabled: "yes" } })).toThrow(
+      /basal\.enabled/,
+    );
     expect(() => parseConfig({ ceilling: {} })).toThrow(/ceilling/);
-    expect(() => parseConfig({ scoring: { method: "magic" } })).toThrow(/scoring\.method/);
+    expect(() => parseConfig({ scoring: { method: "magic" } })).toThrow(
+      /scoring\.method/,
+    );
     expect(() => parseConfig("nope")).toThrow(ConfigError);
   });
 
   it("rejects an age range where min is greater than max", () => {
     expect(() =>
-      parseConfig({ start: { byAge: [{ minAge: 9, maxAge: 5, itemIndex: 0 }] } }),
+      parseConfig({
+        start: { byAge: [{ minAge: 9, maxAge: 5, itemIndex: 0 }] },
+      }),
     ).toThrow(/minAge/);
   });
 

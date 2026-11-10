@@ -19,7 +19,7 @@ export function cfg(overrides: unknown = {}): TestConfig {
 }
 
 export function begin(
-  items: Item[],
+  items: readonly Item[],
   config: TestConfig,
   participant: Participant = {},
 ): SessionState {
@@ -32,7 +32,9 @@ export function answer(state: SessionState, correct: boolean): SessionState {
   if (!item) throw new Error("no current item");
   return recordResponse(state, {
     itemId: item.id,
-    choiceIndex: correct ? item.correctIndex : item.correctIndex + 1,
+    choiceIndex: correct
+      ? item.correctIndex
+      : (item.correctIndex + 1) % item.choices.length,
     timestamp: 2_000 + state.events.length,
   });
 }
